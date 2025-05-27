@@ -170,48 +170,49 @@ def get_sub_invoices(main_invoice_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-
-
-
-
-
-
-
-
-@invoice_bp.route('/dealer-from-subinvoice/<int:sub_invoice_id>', methods=['GET'])
+@invoice_bp.route('/del_subinvoice', methods=['DELETE'])
 @token_required
-def get_dealer_id_from_subinvoice(sub_invoice_id):
+def delete_sub_invoice_direct():
     try:
+        data = request.get_json()
+        required_fields = ['dealer_id', 'subinvoice_id']
+        if not all(field in data for field in required_fields):
+            return jsonify({"error": "Missing required fields: dealer_id, subinvoice_id"}), 400
+
+        dealer_id = data['dealer_id']
+        subinvoice_id = data['subinvoice_id']
+
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Step 1: Get main_invoice_id from sub_invoices
-        cursor.execute("SELECT main_invoice_id FROM sub_invoices WHERE id = ?", (sub_invoice_id,))
-        sub_invoice = cursor.fetchone()
+        # Get the total from sub_invoices
+        cursor.execute("SELECT total FROM sub_invoices WHERE id = ?", (subinvoice_id,))
+        row = cursor.fetchone()
 
-        if sub_invoice is None:
+        if row is None:
             cursor.close()
             conn.close()
             return jsonify({"error": "Sub-invoice not found"}), 404
 
-        main_invoice_id = sub_invoice[0]
+        total = row[0]
 
-        # Step 2: Get dealer_id from main_invoices
-        cursor.execute("SELECT dealer_id FROM main_invoices WHERE id = ?", (main_invoice_id,))
-        main_invoice = cursor.fetchone()
+        # Delete the sub-invoice
+        cursor.execute("DELETE FROM sub_invoices WHERE id = ?", (subinvoice_id,))
 
-        if main_invoice is None:
-            cursor.close()
-            conn.close()
-            return jsonify({"error": "Main invoice not found"}), 404
+        # Update dealer's financials
+        cursor.execute("""
+            UPDATE dealers
+            SET net_revenue = net_revenue - ?,
+                balance = balance - ?
+            WHERE id = ?
+        """, (total, total, dealer_id))
 
-        dealer_id = main_invoice[0]
-
+        conn.commit()
         cursor.close()
         conn.close()
 
-        return jsonify({"dealer_id": dealer_id}), 200
+        return jsonify({"message": "Sub-invoice deleted and dealer updated successfully"}), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
